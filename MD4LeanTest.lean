@@ -1,5 +1,9 @@
 import MD4Lean
 
+/-- info: some "<p>Hello <em>world</em></p>\n" -/
+#guard_msgs in
+#eval MD4Lean.renderHtml "Hello *world*"
+
 open MD4Lean
 
 def test (successes : IO.Ref Nat) (failures : IO.Ref (Array (String × Document × Option Document))) (expected : Array Block) (str : String) (parserFlags : UInt32 := MD_DIALECT_COMMONMARK) : IO Unit := do
