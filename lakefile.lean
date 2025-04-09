@@ -38,14 +38,18 @@ def wrapperOTarget (pkg : Package) : FetchM (Job FilePath) := do
         "-I", (pkg.dir / md4cDir).toString, "-fPIC"]
       compileO oFile srcFile flags
 
-@[default_target]
-lean_lib MD4Lean where
-  precompileModules := true
+
 
 extern_lib md4c (pkg) := do
   let name := nameToStaticLib "leanmd4c"
   let oTargets := (←srcNames.mapM (md4cOTarget pkg)) ++ #[←wrapperOTarget pkg]
   buildStaticLib (pkg.staticLibDir / name) oTargets
+
+@[default_target]
+lean_lib MD4Lean where
+  precompileModules := true
+  moreLinkObjs := #[md4c]
+
 
 lean_exe «example» where
   root := `Main
