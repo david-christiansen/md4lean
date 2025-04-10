@@ -45,11 +45,16 @@ extern_lib md4c (pkg) := do
   let oTargets := (←srcNames.mapM (md4cOTarget pkg)) ++ #[←wrapperOTarget pkg]
   buildStaticLib (pkg.staticLibDir / name) oTargets
 
+target md4cShared : Dynlib := do
+  let pkg ← (← getWorkspace).findPackage? `MD4Lean
+  let libname := "leanmd4c"
+  let name := nameToSharedLib libname
+  let oTargets := (← srcNames.mapM (md4cOTarget pkg)) ++ #[← wrapperOTarget pkg]
+  buildLeanSharedLib libname (pkg.sharedLibDir / name) oTargets #[]
+
 @[default_target]
 lean_lib MD4Lean where
   precompileModules := true
-  moreLinkObjs := #[md4c]
-
 
 lean_exe «example» where
   root := `Main
