@@ -76,6 +76,7 @@ public def runTests (successes : IO.Ref Nat) (failures : IO.Ref (Array (String Ã
   test successes failures #[.p #[.normal "given by ", .latexMathDisplay #["f(x)"], .normal ", it's ..."]] "given by $$f(x)$$, it's ..." (parserFlags := MD_FLAG_LATEXMATHSPANS)
   test successes failures #[.p #[.normal "go ", .a #[.normal "https://example.com"] #[.normal "an excellent", .entity "&trade;", .normal " site"] false #[.normal "here"]]] "go [here](https://example.com \"an excellent&trade; site\")"
   test successes failures #[.p #[.a #[.normal "https://example.com"] #[] true #[.normal "https://example.com"]]] "<https://example.com>"
+  test successes failures #[.p #[.a #[.normal "https://example.com"] #[.normal "x", .nullchar, .normal "y"] false #[.normal "here"]]] "[here](https://example.com \"x\x00y\")"
   test successes failures #[.p #[.a #[.normal "https://example.com"] #[] false #[.normal "txt"], .normal " [txt][nonref]"]] "[txt][ref] [txt][nonref]\n\n[ref]: https://example.com"
   test successes failures #[.p #[.img #[.normal "foo.jpg"] #[] #[.normal "blah"]]] "![blah](foo.jpg)"
   test successes failures #[.p #[.img #[.normal "foo.jpg"] #[.normal "title"] #[.normal "blah"]]] "![blah](foo.jpg \"title\")"

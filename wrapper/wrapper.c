@@ -6,6 +6,51 @@
 void *realloc(void *ptr, size_t new_size);
 #endif
 
+// AST constructors exported from MD4Lean.FFI. The wrapper calls these instead of
+// allocating constructor objects, so the runtime layout of the AST types stays private to
+// Lean-compiled code. Object arguments are owned (consumed by the callee). Nullary
+// constructors take a Unit argument, passed as lean_box(0). Character-valued fields are
+// passed as uint32_t; optional fields are passed as a presence flag plus a raw value.
+extern lean_obj_res lean_md4c_attr_normal(lean_obj_arg s);
+extern lean_obj_res lean_md4c_attr_entity(lean_obj_arg s);
+extern lean_obj_res lean_md4c_attr_nullchar(lean_obj_arg unit);
+
+extern lean_obj_res lean_md4c_text_normal(lean_obj_arg s);
+extern lean_obj_res lean_md4c_text_nullchar(lean_obj_arg unit);
+extern lean_obj_res lean_md4c_text_br(lean_obj_arg s);
+extern lean_obj_res lean_md4c_text_softbr(lean_obj_arg s);
+extern lean_obj_res lean_md4c_text_entity(lean_obj_arg s);
+extern lean_obj_res lean_md4c_text_em(lean_obj_arg contents);
+extern lean_obj_res lean_md4c_text_strong(lean_obj_arg contents);
+extern lean_obj_res lean_md4c_text_u(lean_obj_arg contents);
+extern lean_obj_res lean_md4c_text_a(lean_obj_arg href, lean_obj_arg title, uint8_t is_auto,
+  lean_obj_arg contents);
+extern lean_obj_res lean_md4c_text_img(lean_obj_arg src, lean_obj_arg title, lean_obj_arg alt);
+extern lean_obj_res lean_md4c_text_code(lean_obj_arg contents);
+extern lean_obj_res lean_md4c_text_del(lean_obj_arg contents);
+extern lean_obj_res lean_md4c_text_latex_math(lean_obj_arg contents);
+extern lean_obj_res lean_md4c_text_latex_math_display(lean_obj_arg contents);
+extern lean_obj_res lean_md4c_text_wikilink(lean_obj_arg target, lean_obj_arg contents);
+
+extern lean_obj_res lean_md4c_block_p(lean_obj_arg contents);
+extern lean_obj_res lean_md4c_block_ul(uint8_t tight, uint32_t mark, lean_obj_arg items);
+extern lean_obj_res lean_md4c_block_ol(uint8_t tight, lean_obj_arg start, uint32_t mark,
+  lean_obj_arg items);
+extern lean_obj_res lean_md4c_block_hr(lean_obj_arg unit);
+extern lean_obj_res lean_md4c_block_header(lean_obj_arg level, lean_obj_arg contents);
+extern lean_obj_res lean_md4c_block_code(lean_obj_arg info, lean_obj_arg lang, uint8_t has_fence,
+  uint32_t fence_char, lean_obj_arg strings);
+extern lean_obj_res lean_md4c_block_html(lean_obj_arg contents);
+extern lean_obj_res lean_md4c_block_blockquote(lean_obj_arg contents);
+extern lean_obj_res lean_md4c_block_table(lean_obj_arg head, lean_obj_arg body);
+
+extern lean_obj_res lean_md4c_li(uint8_t is_task, uint32_t task_char, size_t task_offset,
+  lean_obj_arg contents);
+extern lean_obj_res lean_md4c_document_mk(lean_obj_arg blocks);
+
+extern lean_obj_res lean_md4c_some_document(lean_obj_arg d);
+extern lean_obj_res lean_md4c_some_string(lean_obj_arg s);
+
 static void
 process_output(const MD_CHAR* text, MD_SIZE size, void* userdata)
 {
@@ -15,7 +60,7 @@ process_output(const MD_CHAR* text, MD_SIZE size, void* userdata)
     lean_dec_ref(new_string);
 }
 
-lean_obj_res lean_md4c_markdown_to_html(b_lean_obj_arg s, uint32_t p_flags, uint32_t r_flags) {
+LEAN_EXPORT lean_obj_res lean_md4c_markdown_to_html(b_lean_obj_arg s, uint32_t p_flags, uint32_t r_flags) {
     size_t input_size = lean_string_size(s) - 1;
     lean_object *html_string = lean_mk_string("");
 
@@ -28,10 +73,7 @@ lean_obj_res lean_md4c_markdown_to_html(b_lean_obj_arg s, uint32_t p_flags, uint
         /* Option.none */
         html_string = lean_box(0);
     } else {
-        /* Option.some */
-        lean_object *tmp = lean_alloc_ctor(1, 1, 0);
-        lean_ctor_set(tmp, 0, html_string);
-        html_string = tmp;
+        html_string = lean_md4c_some_string(html_string);
     }
 
     return html_string;
@@ -98,15 +140,18 @@ typedef struct parse_stack {
 
 parse_stack *parse_stack_new() {
     parse_stack *stk = malloc(sizeof(parse_stack));
-    if (stk == 0) lean_internal_panic_out_of_memory();
+    if (stk == NULL) lean_internal_panic_out_of_memory();
     stk->size = 64;
     stk->top = 0;
     stk->args = malloc(sizeof(lean_object *) * stk->size);
-    if (stk->args == 0) lean_internal_panic_out_of_memory();
+    if (stk->args == NULL) lean_internal_panic_out_of_memory();
     stk->details = malloc(sizeof(details) * stk->size);
-    if (stk->details == 0) lean_internal_panic_out_of_memory();
-    stk->args[0] = lean_mk_empty_array();
+    if (stk->details == NULL) lean_internal_panic_out_of_memory();
     stk->tags = malloc(sizeof(tag) * stk->size);
+    if (stk->tags == NULL) lean_internal_panic_out_of_memory();
+    stk->args[0] = lean_mk_empty_array();
+    stk->tags[0] = TAG_BLOCK;
+    stk->details[0] = no_detail;
 
     return stk;
 }
@@ -114,12 +159,12 @@ parse_stack *parse_stack_new() {
 void parse_stack_push(parse_stack *stk, details details, tag tag) {
     if (stk->top >= stk->size - 1) {
         size_t newsize = stk->size * 2;
-        stk->args = realloc(stk->args, sizeof(lean_object) * newsize);
-        if (stk->args == 0) lean_internal_panic_out_of_memory();
+        stk->args = realloc(stk->args, sizeof(lean_object *) * newsize);
+        if (stk->args == NULL) lean_internal_panic_out_of_memory();
         stk->details = realloc(stk->details, sizeof(details) * newsize);
-        if (stk->details == 0) lean_internal_panic_out_of_memory();
+        if (stk->details == NULL) lean_internal_panic_out_of_memory();
         stk->tags = realloc(stk->tags, sizeof(tag) * newsize);
-        if (stk->tags == 0) lean_internal_panic_out_of_memory();
+        if (stk->tags == NULL) lean_internal_panic_out_of_memory();
         stk->size = newsize;
     }
     stk->top++;
@@ -161,26 +206,21 @@ lean_obj_res get_attr(MD_ATTRIBUTE attr, lean_obj_arg dest) {
     for (unsigned i = 0; attr.substr_offsets[i] < attr.size; i++) {
         size_t start = attr.substr_offsets[i];
         size_t end = attr.substr_offsets[i + 1];
-        // The constructor indices below are for type AttrText, not Text
         switch (attr.substr_types[i]) {
         case MD_TEXT_NORMAL: {
             lean_object *str =
                 lean_mk_string_from_bytes(attr.text + start, end - start);
-            lean_object *ctor = lean_alloc_ctor(0, 1, 0);
-            lean_ctor_set(ctor, 0, str);
-            dest = lean_array_push(dest, ctor);
+            dest = lean_array_push(dest, lean_md4c_attr_normal(str));
             break;
         }
         case MD_TEXT_ENTITY: {
             lean_object *str =
                 lean_mk_string_from_bytes(attr.text + start, end - start);
-            lean_object *ctor = lean_alloc_ctor(1, 1, 0);
-            lean_ctor_set(ctor, 0, str);
-            dest = lean_array_push(dest, ctor);
+            dest = lean_array_push(dest, lean_md4c_attr_entity(str));
             break;
         }
         case MD_TEXT_NULLCHAR: {
-            dest = lean_array_push(dest, lean_box(2));
+            dest = lean_array_push(dest, lean_md4c_attr_nullchar(lean_box(0)));
             break;
         }
         default:
@@ -190,36 +230,13 @@ lean_obj_res get_attr(MD_ATTRIBUTE attr, lean_obj_arg dest) {
     return dest;
 }
 
-static unsigned int block_ctor(MD_BLOCKTYPE type) {
-    switch (type) {
-    case MD_BLOCK_QUOTE:
-        return 7;
-    case MD_BLOCK_HR:
-        return 3;
-    case MD_BLOCK_H:
-        return 4;
-    case MD_BLOCK_CODE:
-        return 5;
-    case MD_BLOCK_HTML:
-        return 6;
-    case MD_BLOCK_P:
-        return 0;
-    case MD_BLOCK_TABLE:
-        return 8;
-    default:
-        lean_internal_panic_unreachable();
-    }
-}
-
 static int enter_block_callback(MD_BLOCKTYPE type, void *detail, void *stack) {
     details block_details = no_detail;
 
     // See note on typedef tag
     if (parse_stack_top_tag(stack) == TAG_IMPLICIT_P) {
         lean_object *texts = parse_stack_pop((parse_stack *)stack);
-        lean_object *p = lean_alloc_ctor(block_ctor(MD_BLOCK_P), 1, 0);
-        lean_ctor_set(p, 0, texts);
-        parse_stack_save(stack, p);
+        parse_stack_save(stack, lean_md4c_block_p(texts));
         assert(parse_stack_top_tag(stack) == TAG_LI);
     }
 
@@ -250,46 +267,32 @@ static int leave_block_callback(MD_BLOCKTYPE type, void *detail, void *userdata)
     switch (type) {
     case MD_BLOCK_DOC: {
         assert(stack->top == 1);
-        // Here we don't allocate a document constructor because
-        // of the newtype optimization
         lean_object *blocks = parse_stack_pop(stack);
-        parse_stack_save(stack, blocks);
+        parse_stack_save(stack, lean_md4c_document_mk(blocks));
         break;
     }
     case MD_BLOCK_UL: {
         // The details provided as an argument here are incorrect; use the ones
         // passed to the enter callback
         MD_BLOCK_UL_DETAIL ul_detail = stack->details[stack->top].ul_details;
-        uint8_t is_tight = ul_detail.is_tight ? 1 : 0;
         lean_object *items = parse_stack_pop(stack);
-
-        lean_object *ul = lean_alloc_ctor(1, 1, 5); // 4 bytes for char, 1 for bool
-        lean_ctor_set(ul, 0, items);
-        lean_ctor_set_uint32(ul, sizeof(void*), ul_detail.mark);
-        lean_ctor_set_uint8(ul, sizeof(void*) + sizeof(uint32_t), is_tight);
-
-        parse_stack_save(stack, ul);
+        parse_stack_save(stack,
+            lean_md4c_block_ul(ul_detail.is_tight ? 1 : 0, ul_detail.mark, items));
         break;
     }
     case MD_BLOCK_QUOTE: {
         lean_object *blocks = parse_stack_pop(stack);
-        lean_object *quote = lean_alloc_ctor(block_ctor(type), 1, 0);
-        lean_ctor_set(quote, 0, blocks);
-        parse_stack_save(stack, quote);
+        parse_stack_save(stack, lean_md4c_block_blockquote(blocks));
         break;
     }
     case MD_BLOCK_OL: {
         // The details provided as an argument here are incorrect; use the ones
         // passed to the enter callback
         MD_BLOCK_OL_DETAIL ol_detail = stack->details[stack->top].ol_details;
-        uint8_t is_tight = ol_detail.is_tight ? 1 : 0;
         lean_object *items = parse_stack_pop(stack);
-        lean_object *ol = lean_alloc_ctor(2, 2, 5); // 4 bytes for char, 1 for bool
-        lean_ctor_set(ol, 0, lean_unsigned_to_nat(ol_detail.start));
-        lean_ctor_set(ol, 1, items);
-        lean_ctor_set_uint32(ol, 2 * sizeof(void*), ol_detail.mark_delimiter);
-        lean_ctor_set_uint8(ol, 2 * sizeof(void*) + sizeof(uint32_t), is_tight);
-        parse_stack_save(stack, ol);
+        parse_stack_save(stack,
+            lean_md4c_block_ol(ol_detail.is_tight ? 1 : 0,
+                lean_unsigned_to_nat(ol_detail.start), ol_detail.mark_delimiter, items));
         break;
     }
     case MD_BLOCK_LI: {
@@ -302,38 +305,22 @@ static int leave_block_callback(MD_BLOCKTYPE type, void *detail, void *userdata)
         if (parse_stack_top_tag(stack) != TAG_LI) {
             assert(parse_stack_top_tag(stack) == TAG_IMPLICIT_P);
             lean_object *texts = parse_stack_pop(stack);
-            lean_object *p = lean_alloc_ctor(block_ctor(MD_BLOCK_P), 1, 0);
-            lean_ctor_set(p, 0, texts);
-            parse_stack_save(stack, p);
+            parse_stack_save(stack, lean_md4c_block_p(texts));
             assert(parse_stack_top_tag(stack) == TAG_LI);
         }
 
         lean_object *blocks = parse_stack_pop(stack);
-        lean_object *li = lean_alloc_ctor(0, 3, 1);
-        lean_ctor_set_uint8(li, 3 * sizeof(void *), li_detail->is_task ? 1 : 0);
-        if (li_detail->is_task) {
-            lean_object *mark = lean_alloc_ctor(1, 1, 0);
-            lean_ctor_set(mark, 0, lean_box_uint32(li_detail->task_mark));
-            lean_ctor_set(li, 0, mark);
-            lean_object *offset = lean_alloc_ctor(1, 1, 0);
-            lean_ctor_set(offset, 0,
-                          lean_box_usize(li_detail->task_mark_offset));
-            lean_ctor_set(li, 1, offset);
-        } else {
-            lean_ctor_set(li, 0, lean_box(0));
-            lean_ctor_set(li, 1, lean_box(0));
-        }
-        lean_ctor_set(li, 2, blocks);
-
-        parse_stack_save(stack, li);
+        // task_mark and task_mark_offset are read by the constructor only when is_task is set
+        parse_stack_save(stack,
+            lean_md4c_li(li_detail->is_task ? 1 : 0, li_detail->task_mark,
+                li_detail->task_mark_offset, blocks));
         break;
     }
     case MD_BLOCK_HR: {
-        lean_object *hr = lean_box(block_ctor(type));
         lean_object *items = parse_stack_pop(stack);
         assert(lean_array_size(items) == 0);
         lean_dec_ref(items);
-        parse_stack_save(stack, hr);
+        parse_stack_save(stack, lean_md4c_block_hr(lean_box(0)));
         break;
     }
     case MD_BLOCK_H: {
@@ -341,11 +328,8 @@ static int leave_block_callback(MD_BLOCKTYPE type, void *detail, void *userdata)
         // passed to the enter callback
         MD_BLOCK_H_DETAIL h_detail = stack->details[stack->top].h_details;
         lean_object *texts = parse_stack_pop(stack);
-        unsigned level = h_detail.level;
-        lean_object *p = lean_alloc_ctor(block_ctor(type), 2, 0);
-        lean_ctor_set(p, 0, lean_unsigned_to_nat(level));
-        lean_ctor_set(p, 1, texts);
-        parse_stack_save(stack, p);
+        parse_stack_save(stack,
+            lean_md4c_block_header(lean_unsigned_to_nat(h_detail.level), texts));
         break;
     }
     case MD_BLOCK_CODE: {
@@ -353,32 +337,19 @@ static int leave_block_callback(MD_BLOCKTYPE type, void *detail, void *userdata)
         lean_object *info = get_attr(code_detail->info, lean_mk_empty_array());
         lean_object *lang = get_attr(code_detail->lang, lean_mk_empty_array());
         lean_object *strings = parse_stack_pop(stack);
-        lean_object *code = lean_alloc_ctor(block_ctor(type), 4, 0);
-        lean_ctor_set(code, 0, info);
-        lean_ctor_set(code, 1, lang);
-        if (code_detail->fence_char == 0) {
-            lean_ctor_set(code, 2, lean_box(0));
-        } else {
-            lean_object *some = lean_alloc_ctor(1, 1, 0);
-            lean_ctor_set(some, 0, lean_box_uint32(code_detail->fence_char));
-            lean_ctor_set(code, 2, some);
-        }
-        lean_ctor_set(code, 3, strings);
-        parse_stack_save(stack, code);
+        parse_stack_save(stack,
+            lean_md4c_block_code(info, lang, code_detail->fence_char != 0,
+                code_detail->fence_char, strings));
         break;
     }
     case MD_BLOCK_HTML: {
         lean_object *texts = parse_stack_pop(stack);
-        lean_object *html = lean_alloc_ctor(block_ctor(type), 1, 0);
-        lean_ctor_set(html, 0, texts);
-        parse_stack_save(stack, html);
+        parse_stack_save(stack, lean_md4c_block_html(texts));
         break;
     }
     case MD_BLOCK_P: {
         lean_object *texts = parse_stack_pop(stack);
-        lean_object *p = lean_alloc_ctor(block_ctor(type), 1, 0);
-        lean_ctor_set(p, 0, texts);
-        parse_stack_save(stack, p);
+        parse_stack_save(stack, lean_md4c_block_p(texts));
         break;
     }
     case MD_BLOCK_TABLE: {
@@ -390,10 +361,7 @@ static int leave_block_callback(MD_BLOCKTYPE type, void *detail, void *userdata)
         lean_object *thead = lean_array_uget(args, 0);
         lean_object *tbody = lean_array_uget(args, 1);
         lean_dec_ref(args);
-        lean_object *table = lean_alloc_ctor(block_ctor(type), 2, 0);
-        lean_ctor_set(table, 0, thead);
-        lean_ctor_set(table, 1, tbody);
-        parse_stack_save(stack, table);
+        parse_stack_save(stack, lean_md4c_block_table(thead, tbody));
         break;
     }
     case MD_BLOCK_THEAD: {
@@ -443,30 +411,27 @@ static int enter_span_callback(MD_SPANTYPE type, void *detail, void *stack) {
     return 0;
 }
 
-static unsigned span_ctor(MD_SPANTYPE type) {
+// Build a span that wraps a single array argument. The element type of the array varies by
+// constructor, but the construction is uniform.
+static lean_obj_res span_single_ctor(MD_SPANTYPE type, lean_obj_arg contents) {
     switch (type) {
     case MD_SPAN_EM:
-        return 5;
+        return lean_md4c_text_em(contents);
     case MD_SPAN_STRONG:
-        return 6;
+        return lean_md4c_text_strong(contents);
     case MD_SPAN_U:
-        return 7;
-    case MD_SPAN_A:
-        return 8;
-    case MD_SPAN_IMG:
-        return 9;
-    case MD_SPAN_CODE:
-        return 10;
+        return lean_md4c_text_u(contents);
     case MD_SPAN_DEL:
-        return 11;
+        return lean_md4c_text_del(contents);
+    case MD_SPAN_CODE:
+        return lean_md4c_text_code(contents);
     case MD_SPAN_LATEXMATH:
-        return 12;
+        return lean_md4c_text_latex_math(contents);
     case MD_SPAN_LATEXMATH_DISPLAY:
-        return 13;
-    case MD_SPAN_WIKILINK:
-        return 14;
+        return lean_md4c_text_latex_math_display(contents);
+    default:
+        lean_internal_panic_unreachable();
     }
-    lean_internal_panic_unreachable();
 }
 
 static int leave_span_callback(MD_SPANTYPE type, void *detail, void *userdata) {
@@ -487,52 +452,33 @@ static int leave_span_callback(MD_SPANTYPE type, void *detail, void *userdata) {
     case MD_SPAN_LATEXMATH:
     case MD_SPAN_LATEXMATH_DISPLAY: {
         lean_object *txt = parse_stack_pop(stack);
-        lean_object *span = lean_alloc_ctor(span_ctor(type), 1, 0);
-        lean_ctor_set(span, 0, txt);
-        parse_stack_save(stack, span);
+        parse_stack_save(stack, span_single_ctor(type, txt));
         break;
     }
     case MD_SPAN_A: {
         // Here we need the details provided to the leave callback
         MD_SPAN_A_DETAIL *a_detail = (MD_SPAN_A_DETAIL *)detail;
         lean_object *txt = parse_stack_pop(stack);
-        lean_object *a = lean_alloc_ctor(span_ctor(type), 3, 1);
-        lean_ctor_set_uint8(a, 3 * sizeof(void *),
-                            a_detail->is_autolink ? 1 : 0);
-        lean_object *href = lean_mk_empty_array();
-        href = get_attr(a_detail->href, href);
-        lean_ctor_set(a, 0, href);
-        lean_object *title = lean_mk_empty_array();
-        title = get_attr(a_detail->title, title);
-        lean_ctor_set(a, 1, title);
-        lean_ctor_set(a, 2, txt);
-        parse_stack_save(stack, a);
+        lean_object *href = get_attr(a_detail->href, lean_mk_empty_array());
+        lean_object *title = get_attr(a_detail->title, lean_mk_empty_array());
+        parse_stack_save(stack,
+            lean_md4c_text_a(href, title, a_detail->is_autolink ? 1 : 0, txt));
         break;
     }
     case MD_SPAN_IMG: {
         // Here we need the details provided to the leave callback
         MD_SPAN_IMG_DETAIL *img_detail = (MD_SPAN_IMG_DETAIL *)detail;
         lean_object *alt = parse_stack_pop(stack);
-        lean_object *img = lean_alloc_ctor(span_ctor(type), 3, 0);
-        lean_object *src = lean_mk_empty_array();
-        src = get_attr(img_detail->src, src);
-        lean_ctor_set(img, 0, src);
-        lean_object *title = lean_mk_empty_array();
-        title = get_attr(img_detail->title, title);
-        lean_ctor_set(img, 1, title);
-        lean_ctor_set(img, 2, alt);
-        parse_stack_save(stack, img);
+        lean_object *src = get_attr(img_detail->src, lean_mk_empty_array());
+        lean_object *title = get_attr(img_detail->title, lean_mk_empty_array());
+        parse_stack_save(stack, lean_md4c_text_img(src, title, alt));
         break;
     }
     case MD_SPAN_WIKILINK: {
         MD_SPAN_WIKILINK_DETAIL *wl_detail = (MD_SPAN_WIKILINK_DETAIL *)detail;
         lean_object *txt = parse_stack_pop(stack);
-        lean_object *wl = lean_alloc_ctor(span_ctor(type), 2, 1);
-        lean_object *target = lean_mk_empty_array();
-        target = get_attr(wl_detail->target, target);
-        lean_ctor_set(wl, 0, target);
-        lean_ctor_set(wl, 1, txt);
-        parse_stack_save(stack, wl);
+        lean_object *target = get_attr(wl_detail->target, lean_mk_empty_array());
+        parse_stack_save(stack, lean_md4c_text_wikilink(target, txt));
         break;
     }
     }
@@ -550,31 +496,23 @@ static int text_callback(MD_TEXTTYPE type, const MD_CHAR *text, MD_SIZE size, vo
 
     switch (type) {
     case MD_TEXT_NORMAL: {
-        lean_object *txt = lean_alloc_ctor(0, 1, 0);
-        lean_ctor_set(txt, 0, lean_mk_string_from_bytes(text, size));
-        parse_stack_save(stack, txt);
+        parse_stack_save(stack, lean_md4c_text_normal(lean_mk_string_from_bytes(text, size)));
         break;
     }
     case MD_TEXT_NULLCHAR: {
-        parse_stack_save(stack, lean_box(1));
+        parse_stack_save(stack, lean_md4c_text_nullchar(lean_box(0)));
         break;
     }
     case MD_TEXT_BR: {
-        lean_object *txt = lean_alloc_ctor(2, 1, 0);
-        lean_ctor_set(txt, 0, lean_mk_string_from_bytes(text, size));
-        parse_stack_save(stack, txt);
+        parse_stack_save(stack, lean_md4c_text_br(lean_mk_string_from_bytes(text, size)));
         break;
     }
     case MD_TEXT_SOFTBR: {
-        lean_object *txt = lean_alloc_ctor(3, 1, 0);
-        lean_ctor_set(txt, 0, lean_mk_string_from_bytes(text, size));
-        parse_stack_save(stack, txt);
+        parse_stack_save(stack, lean_md4c_text_softbr(lean_mk_string_from_bytes(text, size)));
         break;
     }
     case MD_TEXT_ENTITY: {
-        lean_object *txt = lean_alloc_ctor(4, 1, 0);
-        lean_ctor_set(txt, 0, lean_mk_string_from_bytes(text, size));
-        parse_stack_save(stack, txt);
+        parse_stack_save(stack, lean_md4c_text_entity(lean_mk_string_from_bytes(text, size)));
         break;
     }
     // The following cases occur only as immediate children of particular
@@ -627,8 +565,8 @@ LEAN_EXPORT lean_obj_res lean_md4c_markdown_parse(b_lean_obj_arg str, uint32_t p
     int ret = md_parse(lean_string_cstr(str), input_size, &parser, stack);
 
     if (ret != 0) {
-        // Return none
         parse_stack_free(stack);
+        /* Option.none */
         return lean_box(0);
     } else {
         assert(stack->top == 0);
@@ -638,8 +576,6 @@ LEAN_EXPORT lean_obj_res lean_md4c_markdown_parse(b_lean_obj_arg str, uint32_t p
         parse_stack_free(stack);
         assert(lean_is_exclusive(doc));
 
-        lean_object *some = lean_alloc_ctor(1, 1, 0);
-        lean_ctor_set(some, 0, doc);
-        return some;
+        return lean_md4c_some_document(doc);
     }
 }

@@ -9,21 +9,31 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         # Here, "original" means to use the lean-toolchain file's contents in the repository
         # Support starts at 4.23.0 because that's when the first support
         # for modules landed.
-        lean-version: ["original", "v4.23.0", "v4.24.0", "v4.25.0", "v4.26.0", "v4.27.0", "v4.28.0", "v4.29.0-rc1"]
-    name: CI (${{ matrix.lean-version }})
+        lean-version: ["original", "v4.23.0", "v4.24.0", "v4.25.0", "v4.26.0", "v4.27.0", "v4.28.0", "v4.29.0", "v4.30.0", "v4.31.0"]
+        # Windows and macOS are exercised only on the latest release.
+        include:
+          - os: windows-latest
+            lean-version: "v4.31.0"
+          - os: macos-latest
+            lean-version: "v4.31.0"
+    name: CI (${{ matrix.os }}, ${{ matrix.lean-version }})
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Set Lean version
         if: matrix.lean-version != 'original'
+        # bash is used on every OS so that lean-toolchain is written as plain UTF-8 with a
+        # single LF, which the Windows default shell (PowerShell) would not produce.
+        shell: bash
         run: echo "${{ matrix.lean-version }}" > lean-toolchain
 
       # uses lean standard action with all default input values
