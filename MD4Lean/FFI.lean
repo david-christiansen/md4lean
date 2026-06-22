@@ -46,13 +46,13 @@ set_option linter.missingDocs false
 @[export lean_md4c_block_blockquote] def blockBlockquote := Block.blockquote
 @[export lean_md4c_block_table] def blockTable := Block.table
 
-/-- Build a fenced or indented code block. `fenceChar` is read only when `hasFence` is true. -/
+/-- Build a fenced or indented code block. `fenceChar` is used only when `hasFence` is true. -/
 @[export lean_md4c_block_code]
 def blockCode (info lang : Array AttrText) (hasFence : Bool) (fenceChar : UInt32)
     (strings : Array String) : Block :=
   .code info lang (if hasFence then some (Char.ofNat fenceChar.toNat) else none) strings
 
-/-- Build a list item. `taskChar` and `taskOffset` are read only when `isTask` is true. -/
+/-- Build a list item. `taskChar` and `taskOffset` are used only when `isTask` is true. -/
 @[export lean_md4c_li]
 def mkLi (isTask : Bool) (taskChar : UInt32) (taskOffset : USize)
     (contents : Array Block) : Li Block :=
