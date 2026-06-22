@@ -63,7 +63,7 @@ def mkLi (isTask : Bool) (taskChar : UInt32) (taskOffset : USize)
 
 @[export lean_md4c_document_mk] def documentMk := Document.mk
 
+-- We need two functions here because a polymorphic version exports a two-argument function that
+-- requires a garbage type argument at the start.
 @[export lean_md4c_some_document] def someDocument (d : Document) : Option Document := some d
 @[export lean_md4c_some_string] def someString (s : String) : Option String := some s
-
-end MD4Lean
